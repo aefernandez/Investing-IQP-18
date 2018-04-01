@@ -1,0 +1,259 @@
+{
+	OVERNIGHT GAP TRADING STRATEGY
+	
+	Uses a voting system to determine if the conditions for a trade are right.
+	The voting system considers the following:
+		1. Weekly trend 
+		2. Daily trend
+		3. Returns of holding a position for the first hour of the first day
+			Studies show there is a strong negative correlation 
+		4. Returns of holding a position the previous night
+		
+		vote = W1*P1 + W2*P2 + W3*P3 + W4*P4 
+		
+		Each indicator has a weight assigned to it. If the value of the summation is above zero then a long position
+		Is entered. If the summation is below zero, a short is entered.
+		
+	Exit:
+		The system will always exit the position as soon as the market opens the following day.
+		
+	Position Sizing:
+		The position is determined with the following formula using the Kelly Percentage and a maximum risk of 5% of the account per trade.
+		
+		Position = 5 * (#ofWins-((1-#ofWins)/WLratio))
+		
+		Where WLRatio is the current win/loss ratio for the strategy.
+		
+	
+	Developed by Alan Fernandez for the WPI Introduction to Trading Systems Development IQP.
+	Date: 3/31/2018
+	
+}
+
+
+Inputs: Price(C of Data1),
+		Price2(C of Data2),
+		Price3(C of Data3),
+		startingAccountSize(10000),
+		W1(.8),
+		W2(.8),
+		W3(.8),
+		W4(.8),
+		W5(1),
+		FastAvgExpLength(9),
+		SlowAvgExpLength(18),
+		ExpBarsBack(16);
+
+
+Vars:	Cts(10000),
+		tradeFLAG(False),
+		firstWeek(True),
+		adxValue(0),
+		FastMAValue(0),
+		SlowMAValue(0),
+		ATRLength(14),
+		ATRValue(0),
+		P1(0),
+		P2(0),
+		P3(0),
+		P4(0),
+		P5(0),
+		maxRisk(5),
+		directionVote(0),
+		wlRatio(0),
+		winProb(0.5),
+		positionDate(0),
+		FastAvgExp(0),
+		SlowAvgExp(0),
+		lastPosition(0),
+		numLongTrades(0),
+		numShortTrades(0),
+		numWinLong(0),
+		numLoseLong(0),
+		numWinShort(0),
+		numLoseShort(0),
+		shortWLRatio(0),
+		longWLRatio(0),
+		shortGrossLoss(0),
+		shortGrossProfit(0),
+		longGrossProfit(0),
+		longGrossLoss(0),
+		longWinProb(0),
+		shortWinProb(0),
+		longKelly(0),
+		shortKelly(0);
+		
+		ATRValue = AvgTrueRange( ATRLength );
+		FastAvgExp = XAverage( Close of Data1, FastAvgExpLength );
+		SlowAvgExp = XAverage( Close of Data1, SlowAvgExpLength );
+
+{
+	*******************
+	Performance Metrics
+	*******************
+}
+{ Keep track of Gross Profit/Loss and Number of Trades for each position Long/Short individually }
+// Long trades
+If lastPosition = 1 and MarketPosition = 0 then
+Begin
+	
+	If PositionProfit > 0 then
+		begin
+			longGrossProfit = longGrossProfit + PositionProfit;
+			numWinLong = numWinLong + 1;
+		end
+	Else
+		begin
+			longGrossLoss = Absvalue(longGrossLoss) + AbsValue(PositionProfit);
+			numLoseLong = numLoseLong + 1;
+		End;
+	
+	numLongTrades = numLongTrades + 1;
+	//Set lastPosition to 0 since we already evaluated the total profit
+	lastPosition = 0;
+End
+
+// Short trades
+else if lastPosition = -1 and MarketPosition = 0 then
+begin
+	
+	If PositionProfit > 0 then 
+		begin
+			shortGrossProfit = shortGrossProfit + PositionProfit;
+			numWinShort = numWinShort + 1;
+		end
+	Else
+		begin
+			shortGrossLoss = Absvalue(shortGrossLoss) + Absvalue(PositionProfit);
+			numLoseShort = numLoseShort + 1;
+		End; 
+	
+	numShortTrades = numShortTrades + 1;
+	//Set lastPosition to 0 since we already evaluated the total profit
+	lastPosition = 0;
+End;
+
+{
+	***************
+	POSITION SIZING
+	***************
+}
+
+{ Calculate Goss Profits/Losses for Short/Long trades }
+// Long trades
+If longGrossProfit = 0 or longGrossLoss = 0 then
+	begin
+		longWLRatio = 1;
+	End
+Else
+	longWLRatio = longGrossProfit/longGrossLoss;
+
+// Short trades
+If shortGrossProfit = 0 or shortGrossLoss = 0 then
+	begin
+		shortWLRatio = 1;
+	End
+Else
+	shortWLRatio = shortGrossProfit/shortGrossLoss;
+	
+	
+{ Calculate the winning probability for long and short trades }
+// Long trades
+If numWinLong = 0 or numLongTrades = 0 then
+	begin
+		longWinProb = 1;
+	End
+Else
+	longWinProb = numWinLong/numLongTrades;
+	
+// Short trades	
+If numWinShort = 0 or numShortTrades = 0 then
+	begin
+		shortWinProb = 1;
+	End
+Else
+	shortWinProb = numWinShort/numShortTrades;
+	
+{ Calculate Kelly's Criterion for Long and Short Positions	}
+longKelly = maxRisk * (longWinProb-((1-longWinProb)/(longWLRatio)));
+shortKelly = maxRisk * (shortWinProb-((1-shortWinProb)/(shortWLRatio)));
+	
+{
+	************
+	TRADE FILTER
+	************
+}
+
+// 5 Min Bars
+	P1 = Close of Data1 - Close[4] of Data1;
+// Daily Direction
+	P2 = Close of Data1 - Close[1] of Data2;
+// Weekly Direction
+	P3 = Close of Data1 - Close[1] of Data3;
+// Previous day's 1st hour returns: 118 Bars back to get to the open of the market, 114 for 1 hour later
+	P4 = Open[118] of Data1 - Close[114] of Data1;
+// Market Direction
+If FastAvgExp crosses over SlowAvgExp then P5 = 1;
+If FastAvgExp crosses under SlowAvgExp then P5 = -1;
+	
+//P5 = AvgExp - AvgExp[ExpBarsBack];
+// Voting System
+	directionVote = W1*P1 + W2*P2 + W3*P3 - W4*P4; //+ W5*P5;
+
+
+{
+	***********
+	ENTRY RULES
+	***********
+}
+
+// Long Entry
+If MarketPosition = 0 and directionVote > 0 and P5 = 1 and(Time[1] <= 1530) and (Time >= 1530) then
+	begin
+		// Calculate # of stocks to purchase
+		Cts = Round(((startingAccountSize + (longGrossProfit-longGrossLoss))*longKelly) / (Close of Data1), 0);
+		
+		Buy ("Enter_Long") Cts shares this bar at close;
+		positionDate = date;
+		lastPosition = 1;
+	End;
+		
+// Short Entry
+If MarketPosition = 0 and directionVote < 0 and P5 = -1 and (Time[1] <= 1530) and (Time >= 1530) then
+	begin
+		// Calculate # of stocks to purchase
+		Cts = Round(((startingAccountSize + (shortGrossProfit-shortGrossLoss))*shortKelly) / (Close of Data1), 0);
+		
+		Sellshort ("Enter_Short") Cts shares this bar at close;
+		positionDate = date;
+		lastPosition = -1;
+	End; 
+		
+{	**********
+	EXIT RULES
+	**********
+}
+
+// Exit all trades at market open
+
+If PositionDate <> Date then
+begin
+	If MarketPosition = 1 then
+		begin
+			Sell ("Exit_Long") next bar at market;
+		end;
+	If MarketPosition = -1 then
+		begin 
+			BuyToCover ("Exit_Short") next bar at market;
+		end;
+end;
+
+If barssinceentry > 12 then
+	If MarketPosition = 1 then
+		begin
+			Sell ("Exp_L") next bar at market;
+		end
+	Else 
+			BuyToCover ("Exp_S") next bar at market;
+
+
