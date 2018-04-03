@@ -29,7 +29,7 @@
 	Date: 3/31/2018
 	
 }
-
+[intrabarordergeneration = false] 
 
 Inputs: Price(C of Data1),
 		Price2(C of Data2),
@@ -39,10 +39,12 @@ Inputs: Price(C of Data1),
 		W2(.8),
 		W3(.8),
 		W4(.8),
-		W5(1),
+		W5(.8),
 		FastAvgExpLength(9),
 		SlowAvgExpLength(18),
-		ExpBarsBack(16);
+		ExpBarsBack(16),
+		ATRMultiplier(1),
+		ATRLength(20);
 
 
 Vars:	Cts(10000),
@@ -51,7 +53,6 @@ Vars:	Cts(10000),
 		adxValue(0),
 		FastMAValue(0),
 		SlowMAValue(0),
-		ATRLength(14),
 		ATRValue(0),
 		P1(0),
 		P2(0),
@@ -81,7 +82,8 @@ Vars:	Cts(10000),
 		longWinProb(0),
 		shortWinProb(0),
 		longKelly(0),
-		shortKelly(0);
+		shortKelly(0),
+		enterATR(0);
 		
 		ATRValue = AvgTrueRange( ATRLength );
 		FastAvgExp = XAverage( Close of Data1, FastAvgExpLength );
@@ -96,7 +98,6 @@ Vars:	Cts(10000),
 // Long trades
 If lastPosition = 1 and MarketPosition = 0 then
 Begin
-	
 	If PositionProfit > 0 then
 		begin
 			longGrossProfit = longGrossProfit + PositionProfit;
@@ -111,12 +112,11 @@ Begin
 	numLongTrades = numLongTrades + 1;
 	//Set lastPosition to 0 since we already evaluated the total profit
 	lastPosition = 0;
-End
+End;
 
 // Short trades
-else if lastPosition = -1 and MarketPosition = 0 then
+If lastPosition = -1 and MarketPosition = 0 then
 begin
-	
 	If PositionProfit > 0 then 
 		begin
 			shortGrossProfit = shortGrossProfit + PositionProfit;
@@ -184,7 +184,7 @@ shortKelly = maxRisk * (shortWinProb-((1-shortWinProb)/(shortWLRatio)));
 	************
 }
 
-// 5 Min Bars
+// Last Hour direction
 	If Close of Data1 - Close[4] of Data1 > 0 then 
 		begin 
 			P1 = 1; 
@@ -192,14 +192,14 @@ shortKelly = maxRisk * (shortWinProb-((1-shortWinProb)/(shortWLRatio)));
 	else 
 			P1 = -1;
 // Daily Direction
-	If Close of Data1 - Close[1] of Data2 > 0 then
+	If Close of Data1 - Close of Data2 > 0 then
 		Begin
 			P2 = 1;
 		End
 	Else
 			P2 = -1;
 // Weekly Direction
-	If Close of Data1 - Close[1] of Data3 > 0 then
+	If Close of Data1 - Close of Data3 > 0 then
 		Begin
 			P3 = 1;
 		End
@@ -212,13 +212,22 @@ shortKelly = maxRisk * (shortWinProb-((1-shortWinProb)/(shortWLRatio)));
 		End
 	Else
 			P4 = -1;
+			
+// Previous day's 1st hour returns: 118 Bars back to get to the open of the market, 114 for 1 hour later
+	If Open[24] of Data1 - Close[24] of Data1 > 0 then
+		Begin
+			P5 = 1;
+		End
+	Else
+			P5 = -1;
+			
 // Market Direction
 If FastAvgExp crosses over SlowAvgExp then P5 = 1;
 If FastAvgExp crosses under SlowAvgExp then P5 = -1;
 	
 //P5 = AvgExp - AvgExp[ExpBarsBack];
 // Voting System
-	directionVote = W1*P1 + W2*P2 + W3*P3 - W4*P4; //+ W5*P5;
+	directionVote = W1*P1 + W2*P2 + W3*P3 + W4*P4 + W5*P5; 
 
 
 {
@@ -226,54 +235,100 @@ If FastAvgExp crosses under SlowAvgExp then P5 = -1;
 	ENTRY RULES
 	***********
 }
+If (Time[1] <= 1530) and (Time >= 1530) then begin
+	// Long Entry
+	If MarketPosition = 0 and directionVote > 0 and P5 = 1 then
+		begin
+			// Calculate # of stocks to purchase
+			Cts = Round(((startingAccountSize + (longGrossProfit-longGrossLoss))*longKelly) / (Close of Data1), 0);
+			
+			Buy ("Enter_Long") Cts shares this bar at close;
+			enterATR = ATRValue;
+			positionDate = date;
+			lastPosition = 1;
+		End;
+			
+	// Short Entry
+	If MarketPosition = 0 and directionVote < 0 and P5 = -1 then
+		begin
+			// Calculate # of stocks to purchase
+			Cts = Round(((startingAccountSize + (shortGrossProfit-shortGrossLoss))*shortKelly) / (Close of Data1), 0);
+			
+			Sellshort ("Enter_Short") Cts shares this bar at close;
+			enterATR = ATRValue;
+			positionDate = date;
+			lastPosition = -1;
+		End; 
+End;
 
-// Long Entry
-If MarketPosition = 0 and directionVote > 0 and P5 = 1 and(Time[1] <= 1530) and (Time >= 1530) then
-	begin
-		// Calculate # of stocks to purchase
-		Cts = Round(((startingAccountSize + (longGrossProfit-longGrossLoss))*longKelly) / (Close of Data1), 0);
-		
-		Buy ("Enter_Long") Cts shares this bar at close;
-		positionDate = date;
-		lastPosition = 1;
-	End;
-		
-// Short Entry
-If MarketPosition = 0 and directionVote < 0 and P5 = -1 and (Time[1] <= 1530) and (Time >= 1530) then
-	begin
-		// Calculate # of stocks to purchase
-		Cts = Round(((startingAccountSize + (shortGrossProfit-shortGrossLoss))*shortKelly) / (Close of Data1), 0);
-		
-		Sellshort ("Enter_Short") Cts shares this bar at close;
-		positionDate = date;
-		lastPosition = -1;
-	End; 
-		
 {	**********
 	EXIT RULES
 	**********
+	
+	Attempt to capture more profits by switching to a rolling stop if the open is profitable.
+	If there was a reversal in the direction while the market was closed or the position was not profitable
+	then exit the position when the market opens. 
+	
+	When the trailing stop channel exceeds the entry price the price can slowly start moving against the position.
+	Since the ATR is calculated at every bar, if the price exceeds the entry price (but not the ATR stop) then 
+	when the ATR stop is recalculated now the price can freely keep climbing above the entry and the position is reversed.
+	A hard stop at EntryPrice +- ATR stops the price from moving in this manner and increases profitability. 
 }
 
-// Exit all trades at market open
+// Direction reversed overnight or Position lost money overnight
+If PositionDate <> Date and (Time[1] <= 930) and (Time >= 930) then
+begin
+	If P5 <> MarketPosition or PositionProfit < 0 then
+	begin
+		If MarketPosition = 1 then
+			begin
+				Sell ("Ex_Lng") next bar at market;
+			End;
+		If MarketPosition = -1 then
+			begin 
+				BuyToCover ("Ex_Shrt") next bar at market;
+			End;
+	End;
+End;
 
-If PositionDate <> Date then
+// Direction not reversed and position not negative, place trailing stops to capture extra profits
+If PositionDate <> Date and (Time > 930) then
+begin
+	// Quit if the direction reverses 
+	If MarketPosition <> P5 then
+	begin
+		If MarketPosition = 1 then
+		begin
+			Sell ("Ex_Lng_Rev") next bar at market;
+		End;
+	If MarketPosition = -1 then
+		begin 
+			BuyToCover ("Ex_Shrt_Rev") next bar at market;
+		End;
+	end
+	else begin
+		// If the direction is not reversed then place a trailing stop
+		If MarketPosition = 1 then begin
+			Sell ("TS_Lng") next bar (Close - ATRMultiplier*ATRValue) stop;
+			Sell ("BN_Lng") next bar (Entryprice + enterATR ) stop;
+		End;
+		
+		If MarketPosition = -1 then begin
+			BuyToCover ("TS_Shrt") next bar (Close + ATRMultiplier*ATRValue) stop;
+			BuyToCover ("BN_Shrt") next bar (Entryprice - enterATR ) stop;
+		End;
+	end;
+End;
+
+// Exit all positions at end of day
+If PositionDate <> Date and (Time[1] <= 1500) and (Time >= 1500) and MarketPosition <> 0 then
 begin
 	If MarketPosition = 1 then
 		begin
-			Sell ("Exit_Long") next bar at market;
-		end;
+			Sell ("Ex_Lng_EOD") next bar at market;
+		End;
 	If MarketPosition = -1 then
 		begin 
-			BuyToCover ("Exit_Short") next bar at market;
-		end;
-end;
-
-If barssinceentry > 12 then
-	If MarketPosition = 1 then
-		begin
-			Sell ("Exp_L") next bar at market;
-		end
-	Else 
-			BuyToCover ("Exp_S") next bar at market;
-
-
+			BuyToCover ("Ex_Shrt_EOD") next bar at market;
+		End;
+End;
