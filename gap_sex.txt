@@ -1,0 +1,261 @@
+{
+	OVERNIGHT GAP TRADING STRATEGY
+	
+	Uses a voting system to determine if the conditions for a trade are right.
+	The voting system considers the following:
+		1. Weekly trend 
+		2. Daily trend
+		3. Returns of holding a position for the first hour of the first day
+			Studies show there is a strong negative correlation 
+		4. Returns of holding a position the previous night
+		
+		vote = W1*P1 + W2*P2 + W3*P3 + W4*P4 
+		
+		Each indicator has a weight assigned to it. If the value of the summation is above zero then a long position
+		Is entered. If the summation is below zero, a short is entered.
+		
+	Exit:
+		The system will always exit the position as soon as the market opens the following day.
+		
+	Position Sizing:
+		The position is determined with the following formula using the Kelly Percentage and a maximum risk of 5% of the account per trade.
+		
+		Position = 5 * (#ofWins-((1-#ofWins)/WLratio))
+		
+		Where WLRatio is the current win/loss ratio for the strategy.
+		
+	
+	Developed by Alan Fernandez for the WPI Introduction to Trading Systems Development IQP.
+	Date: 3/31/2018
+	
+}
+
+
+Inputs: Price(C of Data1),
+		Price2(C of Data2),
+		Price3(C of Data3),
+		startingAccountSize(10000),
+		W1(.8),
+		W2(.8),
+		W3(.8),
+		W4(.8),
+		W5(1),
+		FastAvgExpLength(9),
+		SlowAvgExpLength(18),
+		ExpBarsBack(16),
+		ATRMultiplier(2);
+
+
+Vars:	Cts(10000),
+		tradeFLAG(False),
+		firstWeek(True),
+		adxValue(0),
+		FastMAValue(0),
+		SlowMAValue(0),
+		ATRLength(14),
+		ATRValue(0),
+		P1(0),
+		P2(0),
+		P3(0),
+		P4(0),
+		P5(0),
+		maxRisk(5),
+		directionVote(0),
+		winProb(0.5),
+		positionDate(0),
+		FastAvgExp(0),
+		SlowAvgExp(0),
+		lastPosition(0),
+		numTrades(0),
+		numWin(0),
+		numLose(0),
+		WLRatio(0),
+		xGrossLoss(0),
+		xGrossProfit(0),
+		kelly(0),
+		enterATR(0);
+		
+		ATRValue = AvgTrueRange( ATRLength );
+		FastAvgExp = XAverage( Close of Data1, FastAvgExpLength );
+		SlowAvgExp = XAverage( Close of Data1, SlowAvgExpLength );
+
+{
+	*******************
+	Performance Metrics
+	*******************
+}
+{ Keep track of Gross Profit/Loss and Number of Trades for each position Long/Short individually }
+// Long trades
+If lastPosition = 1 and MarketPosition = 0 then
+Begin
+	If PositionProfit > 0 then
+		begin
+			xGrossProfit = xGrossProfit + PositionProfit;
+			numWin = numWin + 1;
+		end
+	Else
+		begin
+			xGrossLoss = Absvalue(xGrossLoss) + AbsValue(PositionProfit);
+			numLose = numLose + 1;
+		End;
+	
+	numTrades = numTrades + 1;
+	//Set lastPosition to 0 since we already evaluated the total profit
+	lastPosition = 0;
+End;
+
+{
+	***************
+	POSITION SIZING
+	***************
+}
+
+{ Calculate Goss Profits/Losses for Short/Long trades }
+// Long trades
+If xGrossProfit = 0 or xGrossLoss = 0 then
+	begin
+		WLRatio = 1;
+	End
+Else
+	WLRatio = xGrossProfit/xGrossLoss;
+	
+{ Calculate the winning probability for long and short trades }
+// Long trades
+If numWin = 0 or numTrades = 0 then
+	begin
+		winProb = 1;
+	End
+Else
+	winProb = numWin/numTrades;
+	
+	
+{ Calculate Kelly's Criterion for Long and Short Positions	}
+kelly = maxRisk * (winProb-((1-winProb)/(WLRatio)));
+
+	
+{
+	************
+	TRADE FILTER
+	************
+}
+
+// Last Hour direction
+	If Close of Data1 - Close[4] of Data1 > 0 then 
+		begin 
+			P1 = 1; 
+		end 
+	else 
+			P1 = -1;
+// Daily Direction
+	If Close of Data1 - Close of Data2 > 0 then
+		Begin
+			P2 = 1;
+		End
+	Else
+			P2 = -1;
+// Weekly Direction
+	If Close of Data1 - Close of Data3 > 0 then
+		Begin
+			P3 = 1;
+		End
+	Else
+			P3 = -1;
+// Previous day's 1st hour returns: 118 Bars back to get to the open of the market, 114 for 1 hour later
+	If Open[118] of Data1 - Close[114] of Data1 > 0 then
+		Begin
+			P4 = 1;
+		End
+	Else
+			P4 = -1;
+			
+// Previous day's 1st hour returns: 118 Bars back to get to the open of the market, 114 for 1 hour later
+	If Open[24] of Data1 - Close[24] of Data1 > 0 then
+		Begin
+			P5 = 1;
+		End
+	Else
+			P5 = -1;
+				
+// Market Direction
+If FastAvgExp crosses over SlowAvgExp then P5 = 1;
+If FastAvgExp crosses under SlowAvgExp then P5 = -1;
+	
+//P5 = AvgExp - AvgExp[ExpBarsBack];
+// Voting System
+	directionVote = W1*P1 + W2*P2 + W3*P3 + W4*P4 + W5*P5; 
+
+
+{
+	***********
+	ENTRY RULES
+	***********
+}
+			
+	// Short Entry
+	If MarketPosition = 0 and directionVote < 0 and P5 = -1 then
+		begin
+			// Calculate # of stocks to purchase
+			Cts = Round(((startingAccountSize + (xGrossProfit-xGrossLoss))*kelly) / (Close of Data1), 0);
+			
+			Sellshort ("SE&X_Entry") Cts shares this bar at close;
+			enterATR = ATRValue;
+			positionDate = date;
+			lastPosition = -1;
+		End; 
+End;
+
+{	**********
+	EXIT RULES
+	**********
+	
+	Attempt to capture more profits by switching to a rolling stop if the open is profitable.
+	If there was a reversal in the direction while the market was closed or the position was not profitable
+	then exit the position when the market opens. 
+	
+	When the trailing stop channel exceeds the entry price the price can slowly start moving against the position.
+	Since the ATR is calculated at every bar, if the price exceeds the entry price (but not the ATR stop) then 
+	when the ATR stop is recalculated now the price can freely keep climbing above the entry and the position is reversed.
+	A hard stop at EntryPrice +- ATR stops the price from moving in this manner and increases profitability. 
+}
+
+// Direction reversed overnight or Position lost money overnight
+If PositionDate <> Date and (Time[1] <= 930) and (Time >= 930) then
+begin
+	If P5 <> MarketPosition or PositionProfit < 0 then
+	begin
+		If MarketPosition = -1 then
+			begin 
+				BuyToCover ("SE&X_Loss") next bar at market;
+			End;
+	End;
+End;
+
+// Direction not reversed and position not negative, place trailing stops to capture extra profits
+If PositionDate <> Date and (Time > 930) then
+begin
+	// Quit if the direction reverses 
+	If MarketPosition <> P5 then
+	begin
+	If MarketPosition = -1 then
+		begin 
+			BuyToCover ("SE&X_Rev") next bar at market;
+		End;
+	end
+	else begin
+		// If the direction is not reversed then place a trailing stop
+		
+		If MarketPosition = -1 then begin
+			BuyToCover ("SE&X_TS") next bar (Close + ATRMultiplier*ATRValue) stop;
+			BuyToCover ("SE&X_BN") next bar (Entryprice - enterATR ) stop;
+		End;
+	end;
+End;
+
+// Exit all positions at end of day
+If PositionDate <> Date and (Time[1] <= 1500) and (Time >= 1500) and MarketPosition <> 0 then
+begin
+	If MarketPosition = -1 then
+		begin 
+			BuyToCover ("SE&X_EOD") next bar at market;
+		End;
+End;

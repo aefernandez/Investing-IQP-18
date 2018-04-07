@@ -1,0 +1,296 @@
+{
+This strategy attempts to improve on the common Forex-Commodity correlation trading system by following the correlation between multiple Commodities, Etfs and Forex Pairs to the 
+Forex pair being traded.
+The strategy makes a guess towards where the Forex Pair should move next based on the other symbols and looks for divergences between the guess and the current direction of the pair.
+A divergence is an entry. 
+The strategy exits the trade using moving stops to attempt to let the winners run and cut the losers.
+
+The strategy also adapts for inverting correlations. If for example USDJPY and Oil have an inverse relationship and the correlation changes to a direct relationship, the trades adjust
+to this new pattern. Longs become shorts and shorts become longs. 
+
+	
+CURRENT VERSION:
+	-Uses 4 symbols to guess direction
+	-Disables symbols based on weak correlations
+	-Uses moving stops to secure profits
+
+AUTHOR:
+	Alan Fernandez	
+	
+VARIABLES:
+	mainPriceDirection:	Indicates the larger trend eg. Monthly/Weekly/Hourly
+	
+} 
+
+{
+	Data Streams:
+	Data1 USDJPY	1hr
+	Data2 OIL		1hr
+	Data3 DXJ		1hr
+	Data4 GLD		1hr
+	Data5 GBPJPY	1hr
+}
+
+[IntrabarOrderGeneration = false]
+
+Inputs: StopLoss(400),
+		Price(C of Data1),
+		Price2(C of Data2),
+		Price3(C of Data3),
+		Price4(C of Data4),
+		Price5(C of Data5),
+		Price6(C of Data6),
+		Price7(C of Data7),
+		profitTarget(500),
+		lossTarget(1000),
+		double TriggerLevel(25),
+	 	FastLength(96),
+	 	SlowLength(480),
+	 	profitFloor(100),
+	 	percentRisk(50),
+	 	NumAtrs(2),
+	 	correl_length(168),
+	 	sig_high(.5),
+	 	sig_low(-.5),
+
+	 	FastAvgExpLength(38),
+	 	SlowAvgExpLength(42),
+	 	W1(0),
+	 	W2(0),
+	 	W3(0),
+	 	W4(0),
+	 	W5(0);
+
+Vars:	Cts(100000), //Number of contracts you want strategy to buy
+		tradeFLAG(False),
+		firstWeek(True),
+		adxValue(0),
+		FastMAValue(0),
+		SlowMAValue(0),
+		GoldenCross(false),
+		crossDay(0),
+		indA(0),
+		indB(0),
+		indC(0),
+		indD(0),
+		predictedDirection(0),
+		tradeCounter(0),
+		ATRLength(14),
+		ATRValue(0),
+		Correl_1(0),
+		Correl_2(0),
+		Correl_3(0),
+		Correl_4(0),
+		Correl_5(0),
+		Correl_6(0),
+		FastExp_1(0),
+		FastExp_2(0),
+		FastExp_3(0),
+		FastExp_4(0),
+		FastExp_5(0),
+		FastExp_6(0),
+		FastExp_7(0),
+		SlowExp_1(0),
+		SlowExp_2(0),
+		SlowExp_3(0),
+		SlowExp_4(0),
+		SlowExp_5(0),
+		SlowExp_6(0),
+		SlowExp_7(0),
+		P1(0),
+		P2(0),
+		P3(0),
+		P4(0),
+		P5(0),
+		P6(0),
+		P7(0),
+		kelly(0);
+		
+		ATRValue = AvgTrueRange( ATRLength );
+		
+		FastExp_1 = XAverage( Close of Data1, FastAvgExpLength );
+		SlowExp_1 = XAverage( Close of Data1, SlowAvgExpLength );
+		
+		FastExp_2 = XAverage( Close of Data2, FastAvgExpLength );
+		SlowExp_2 = XAverage( Close of Data2, SlowAvgExpLength );
+		
+		FastExp_3 = XAverage( Close of Data3, FastAvgExpLength );
+		SlowExp_3 = XAverage( Close of Data3, SlowAvgExpLength );
+		
+		FastExp_4 = XAverage( Close of Data4, FastAvgExpLength );
+		SlowExp_4 = XAverage( Close of Data4, SlowAvgExpLength );
+		
+		FastExp_5 = XAverage( Close of Data5, FastAvgExpLength );
+		SlowExp_5 = XAverage( Close of Data5, SlowAvgExpLength );
+		
+		FastExp_6 = XAverage( Close of Data6, FastAvgExpLength );
+		SlowExp_6 = XAverage( Close of Data6, SlowAvgExpLength );
+		
+		FastExp_7 = XAverage( Close of Data7, FastAvgExpLength );
+		SlowExp_7 = XAverage( Close of Data7, SlowAvgExpLength );
+		
+Array:	weeklyPrice[5](0);
+SetStopPosition;
+ 
+{	***********
+ 	CONSTRAINTS
+ 	***********
+}
+//Deal with the first week where weekly Close data is non existent until the end of the week
+If CloseD(5) <> 0 then
+	firstWeek = False;
+	
+//Only trade during American Trading Session: 11AM-3PM
+//Only trade Monday-Thursday. Don't open positions on Friday because they may not close. Do not hold positions over the weekend. 
+If((Time[1] <= 1500) AND (Time >= 1100) and DayOfWeek(date) > 0 and DayOfWeek(date) < 5 and _holidays_check=false) then
+	begin
+	tradeFLAG = True;
+	end
+else
+	tradeFLAG = False;
+
+{
+	Data Streams:
+	Data1 USDJPY	1hr
+	Data2 OIL		1hr
+	Data3 DXJ		1hr
+	Data4 GLD		1hr
+	Data5 GBPJPY	1hr
+}
+{
+	**************
+	 Trade Filter
+	**************
+}
+Correl_1 = Correlation( Close of Data2, Close of Data1, correl_length );
+Correl_2 = Correlation( Close of Data3, Close of Data1, correl_length );
+Correl_3 = Correlation( Close of Data4, Close of Data1, correl_length );
+Correl_4 = Correlation( Close of Data5, Close of Data1, correl_length );
+Correl_5 = Correlation( Close of Data6, Close of Data1, correl_length );
+Correl_6 = Correlation( Close of Data7, Close of Data1, correl_length );
+
+// Market Direction
+If FastExp_1 crosses over SlowExp_1 then P1 = 1;
+If FastExp_1 crosses under SlowExp_1 then P1 = -1;
+
+// Market Direction
+If FastExp_2 crosses over SlowExp_2 then P2 = 1;
+If FastExp_2 crosses under SlowExp_2 then P2 = -1;
+
+// Market Direction
+If FastExp_3 crosses over SlowExp_3 then P3 = 1;
+If FastExp_3 crosses under SlowExp_3 then P3 = -1;
+
+// Market Direction
+If FastExp_4 crosses over SlowExp_4 then P4 = 1;
+If FastExp_4 crosses under SlowExp_4 then P4 = -1;
+
+// Market Direction
+If FastExp_5 crosses over SlowExp_5 then P5 = 1;
+If FastExp_5 crosses under SlowExp_5 then P5 = -1;
+
+// Market Direction
+If FastExp_6 crosses over SlowExp_6 then P6 = 1;
+If FastExp_6 crosses under SlowExp_6 then P6 = -1;
+
+// Market Direction
+If FastExp_7 crosses over SlowExp_7 then P7 = 1;
+If FastExp_7 crosses under SlowExp_7 then P7 = -1;
+
+Print("1 ", P1, " 2: ", P2, " 3: ", P3, " 4: ", P4);
+
+predictedDirection = W1*P2*Correl_1 + W2*P3*Correl_2 + W3*P4*Correl_3 + W4*P5*Correl_4 + W5*P6*Correl_5 + P7*Correl_6;;
+
+
+{	**************
+ 	ENTRY STRATEGY
+	**************
+}
+
+
+If (firstWeek = False and MarketPosition = 0 and tradeFlag) then
+	Begin
+	//Check for a divergence that indicates a long position
+	If(P1 < 0 and predictedDirection > 0) then 
+		Buy ("Div_Long") (Cts) contracts next bar at Market;
+
+	//Check for a divergence that indicates a short position
+	If((P1 > 0) and predictedDirection < 0) then 
+		Sellshort ("Div_Short") (Cts) contracts next bar at Market;
+	end;
+
+
+{	*************
+ 	EXIT STRATEGY
+	*************
+}
+
+
+If(Marketposition = 1) then
+	If predictedDirection < 0 and P1 < 0 then 
+		Sell ("LRev_Exit") Next Bar at Open;
+		
+If(Marketposition = -1) then
+	If predictedDirection > 0 and P1 > 0 then 
+		BuyToCover ("SRev_Exit") Next Bar at Open;
+
+	
+	//Trailing stops for the positions	
+If(MarketPosition = 1) then
+	If(OpenPositionProfit > profitFloor) then //Floor is reached so stops are now being placed to safeguard profits
+		begin
+		Sell ("L_Trail_Stop") Next Bar at (Close - ATRValue*NumAtrs) Stop;
+		End;
+
+			
+If(MarketPosition = -1) then
+	If(OpenPositionProfit > profitFloor) then //Floor is reached so stops are now being placed to safeguard profits
+		Begin
+		BuyToCover ("S_Trail_Stop") Next Bar at (Close + ATRValue*NumAtrs) Stop;
+		End;
+
+	
+	//Re-evaluation of the position if duration is greater than N days
+	//This strategy enters long trades lasting several days. The market may go against the position before agreeing with the position. Thus re-evaluate to avoid bad trades
+If(MarketPosition = 1) then
+	If (BarsSinceEntry > 24 and OpenPositionProfit < 0) then 
+	begin
+		Sell ("L_Bad_Entry") Next Bar at Open;
+		
+		If predictedDirection < 0 then
+			SellShort ("ReN_Long") (Cts) contracts next bar at Market;
+	end;
+If(MarketPosition = -1) then
+	If (BarsSinceEntry > 24 and OpenPositionProfit < 0) then 	
+		begin
+		BuyToCover ("S_Bad_Entry") Next Bar at Open;
+		
+		If predictedDirection > 0 then
+			Buy ("ReN_Short") (Cts) contracts next bar at Market;
+		end;		
+	
+	{
+	If(OpenPositionProfit < -200) then
+		Begin
+		If (MarketPosition = 1) then
+			Sell ("L_Stop_Loss") Next Bar at Open;		
+		If (MarketPosition = -1) then
+			BuyToCover ("S_Stop_Loss") Next Bar at Open;
+		end;
+	}
+	//Set stop loss and profit taking
+	//Setstopposition;	
+	//Setpercenttrailing(profitFloor,percentRisk);
+	//setstoploss(lossTarget);
+	//Setprofittarget(profitTarget);	
+
+{	
+	//Exit the trade if a week has elapsed
+if(BarsSinceEntry > 168) then
+	begin
+		if( Marketposition = 1 ) then
+			Sell ("Exit") next bar at Market;
+		If ( Marketposition = -1 ) then
+			Buytocover ("Cover") next bar at Market;
+	end;
+}
