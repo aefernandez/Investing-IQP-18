@@ -29,6 +29,9 @@ VARIABLES:
 	Data3 DXJ		1hr
 	Data4 GLD		1hr
 	Data5 GBPJPY	1hr
+	Data6 USDCHF	1hr
+	Data7 SPY		1hr
+	
 }
 
 [IntrabarOrderGeneration = false]
@@ -52,7 +55,7 @@ Inputs: StopLoss(400),
 	 	correl_length(168),
 	 	sig_high(.5),
 	 	sig_low(-.5),
-
+		ATRLength(14),
 	 	FastAvgExpLength(38),
 	 	SlowAvgExpLength(42),
 	 	W1(0),
@@ -75,7 +78,6 @@ Vars:	Cts(100000), //Number of contracts you want strategy to buy
 		indD(0),
 		predictedDirection(0),
 		tradeCounter(0),
-		ATRLength(14),
 		ATRValue(0),
 		Correl_1(0),
 		Correl_2(0),
@@ -130,7 +132,7 @@ Vars:	Cts(100000), //Number of contracts you want strategy to buy
 		SlowExp_7 = XAverage( Close of Data7, SlowAvgExpLength );
 		
 Array:	weeklyPrice[5](0);
-SetStopPosition;
+
  
 {	***********
  	CONSTRAINTS
@@ -225,7 +227,7 @@ If (firstWeek = False and MarketPosition = 0 and tradeFlag) then
 	*************
 }
 
-
+{
 If(Marketposition = 1) then
 	If predictedDirection < 0 and P1 < 0 then 
 		Sell ("LRev_Exit") Next Bar at Open;
@@ -233,7 +235,7 @@ If(Marketposition = 1) then
 If(Marketposition = -1) then
 	If predictedDirection > 0 and P1 > 0 then 
 		BuyToCover ("SRev_Exit") Next Bar at Open;
-
+}
 	
 	//Trailing stops for the positions	
 If(MarketPosition = 1) then

@@ -1,0 +1,169 @@
+{
+	Exponential Moving Average Crossover Strategy With Focus on Position and Equity Sizing
+	
+	Author:	Alan Fernandez
+	Date:	4/20/18
+	
+	This is a trend trading strategy. It trades stocks. It is always in the market in one direction or the other. It uses exponential moving average crossovers to determine when to get in
+	and out of the market. The position sizing strategy is identical to the strategy used by the Turtles. Exits are determined by a crossover in the opposite direction to the trade. 
+	Stop losses are used to minimize the maximum drawdown of the position. 
+	
+	*Notes about syntax:
+		-Variable names in all caps using underscore spacing are Input Variables.
+		-Variable names in lower case using camelcase are Local Variables. 
+}
+Inputs: Price(C of Data1),
+		STARTING_ACCOUNT_SIZE(100000),
+		FAST_AVG_EXP_LENGTH(9),
+		SLOW_AVG_EXP_LENGTH(18),
+		EXP_BARS_BACK(16),
+		ATR_MULTIPLIER(1),
+		ATR_LENGTH(20),
+		DAYS_LOSER_HELD(2),
+		PROFIT_FLOOR(40),
+		CHOP_LEN(14),
+		CHOP_THRESHOLD(61.8),
+		POSITION_INCREASE_PERCENTAGE(0.5),
+		N_ATR_L(20);
+
+
+Vars:	Cts(10000),
+		ATRValue(0),
+		fastAvgExp(0),
+		slowAvgExp(0),
+		N(0),
+		DV(0),
+		dollarRisk(0),
+		LTT(0),
+		chopIndex(0),
+		choppyMarket(True),
+		intrabarpersist double accountSize(100000),
+		entryN(0);
+		
+		ATRValue = AvgTrueRange( ATR_LENGTH );
+		fastAvgExp = XAverage( Close of Data1, FAST_AVG_EXP_LENGTH );
+		slowAvgExp = XAverage( Close of Data1, SLOW_AVG_EXP_LENGTH );
+
+{
+	***************
+	POSITION SIZING
+	***************
+	
+	Use the position sizing strategy that was implemented by the turtle traders.
+	This strategy was developed for the commodities market. Here it is re-implemented for the stock market. 
+	It looks at the volatility of the dollar to determine the size of the position.
+}
+
+N = AvgTrueRange(N_ATR_L);
+DV = N*BigPointValue;
+
+If DayOfMonth(Date) = 1 then 
+begin
+	accountSize = STARTING_ACCOUNT_SIZE + GrossProfit-GrossLoss;
+End;
+
+dollarRisk = (accountSize) * .01; 
+LTT = IntPortion(dollarRisk/DV); 
+ 
+{
+	***********
+	ENTRY RULES
+	***********
+	
+	A set of extremely simple entry rules. Enter on the classic exponential moving average crossover. The averages are optimized.
+	The strategy tries to stay in the market all the time by reversing the position when the crossover reverses. 
+}
+
+{
+	*Choppiness Indicator*
+	
+	The Chopiness Index is designed to determine whether the market is trading sideways. It was developed by E.W. Dreiss to trade commodities. 
+	Higher values indicate greater level of choppiness. 
+}
+
+chopIndex = 100 * Log(Summation(AvgTrueRange(1),CHOP_LEN) / (Highest(iff(H >= C[1], H, C[1]),CHOP_LEN) - Lowest(iff(L <= C[1], L, C[1]), CHOP_LEN))) / log(CHOP_LEN);
+
+If chopIndex >= CHOP_THRESHOLD then choppyMarket = true;
+If chopIndex < CHOP_THRESHOLD then choppyMarket = false;
+
+{
+	*Trade Entries* 
+}
+
+If fastAvgExp crosses over slowAvgExp and MarketPosition = 0 and choppyMarket = false then
+	begin
+		buy ("enter_l") LTT shares next bar at market;
+		entryN = N;
+	end;
+	
+If fastAvgExp crosses under slowAvgExp and MarketPosition = 0 and choppyMarket = false then
+	begin
+		sellshort ("enter_s") LTT shares next bar at market;
+		entryN = N;
+	end;
+	
+If fastAvgExp crosses under slowAvgExp and MarketPosition = 1 then 
+	begin
+		Sell ("exit_l") this bar at close;
+		sellshort ("re_enter_s") LTT shares next bar at market;
+		entryN = N;
+	End; 
+	
+If fastAvgExp crosses over slowAvgExp and MarketPosition = -1 then 
+	begin
+		buytocover("exit_s") this bar at close;
+		buy ("re_enter_l") LTT shares next bar at market;
+		entryN = N;
+	end;
+
+Print("BPV:   ", BigPointValue, " N:   ", N, " DV:	", DV, " LTT:	", LTT);
+
+{
+	**********
+	EXIT RULES
+	**********
+	
+	Although the strategy is trying to stay on the market all of the time, the reality is that doing so is not necessarily profitable. 
+	The strategy will quit non profitable trades that have lasted more than X (optimized) days. Trailing stops are also added to retain profits.
+	Finally, the strategy tries to avoid sideways markets for their extremely negative impact on trend following strategies. 
+}
+
+{
+	*Correction Exits*
+	
+	Exit the trade and reverse the position if:
+		1. OpenPositionProfit is negative
+		2. Opposite crossover hasn't happend yet
+		3. More than X (optimized) days have elapsed
+		
+		Exit bad_long(bl) and bad_short(bs)
+}
+
+If OpenPositionProfit < 0 and BarsSinceEntry > DAYS_LOSER_HELD then
+begin
+	If MarketPosition = 1 then
+		begin
+			Sell ("exit_bl") this bar at close;
+		End;	
+		 
+	If MarketPosition = -1 then
+		begin
+			buytocover("exit_bs") this bar at close;
+		end;
+end;
+
+{
+	*Trailing Stops with Profit Floor*
+	
+	Following an optimized profit floor, set a trailing stop that accounts for ATR to maximize profits held.
+}
+
+If openpositionprofit > PROFIT_FLOOR then
+begin
+	If MarketPosition = 1 then
+		Sell ("trail_l") next bar (Close - ATR_MULTIPLIER*ATRValue) stop;
+	If MarketPosition = -1 then
+		Buytocover ("trail_s") next bar (Close + ATR_MULTIPLIER*ATRValue) stop;
+	
+end;
+
